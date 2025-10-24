@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-AI 이미지 분류기 웹사이트 - 간단 실행 스크립트
-유니코드 문제를 완전히 해결한 버전
+AI 이미지 분류기 웹사이트 - 포트 8080으로 실행
 """
 
 import os
@@ -22,18 +21,18 @@ for directory in directories:
 
 print("\nStarting AI Image Classifier Web Application...")
 print("=" * 60)
-print("Please open your browser and go to: http://localhost:5000")
+print("Please open your browser and go to: http://localhost:8080")
 print("Press Ctrl+C to stop the server")
 print("=" * 60)
 
 try:
-    # Flask 앱 실행
+    # Flask 앱 실행 (포트 8080)
     from app import app
-    app.run(debug=False, host='127.0.0.1', port=5000)
+    app.run(debug=False, host='127.0.0.1', port=8080)
 except KeyboardInterrupt:
     print("\n\nWeb application stopped.")
 except Exception as e:
     print(f"\nERROR: {e}")
     print("Troubleshooting:")
     print("1. Check if all packages are installed")
-    print("2. Check if port 5000 is available")
+    print("2. Check if port 8080 is available")

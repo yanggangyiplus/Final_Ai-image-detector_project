@@ -107,6 +107,40 @@
                                     <p id="explanation-text" class="text-muted"></p>
                                 </div>
 
+                                <!-- Image Preprocessing Info -->
+                                <div class="mb-4" id="preprocessing-section">
+                                    <h6 class="text-secondary">
+                                        <i class="fas fa-resize me-2"></i>이미지 전처리 정보
+                                    </h6>
+                                    <div class="alert alert-light border" role="alert">
+                                        <div class="row text-sm">
+                                            <div class="col-6">
+                                                <strong>원본 크기:</strong><br>
+                                                <span id="original-dimensions" class="text-muted"></span>
+                                            </div>
+                                            <div class="col-6">
+                                                <strong>분석용 크기:</strong><br>
+                                                <span id="processed-dimensions" class="text-muted"></span>
+                                            </div>
+                                        </div>
+                                        <hr class="my-2">
+                                        <div class="row text-sm">
+                                            <div class="col-12">
+                                                <strong>전처리 이유:</strong><br>
+                                                <span id="preprocessing-reason" class="text-muted"></span>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <!-- Image Comparison -->
+                                    <div id="image-comparison" class="d-none">
+                                        <h6 class="text-secondary mb-2">
+                                            <i class="fas fa-images me-2"></i>전처리 전후 비교
+                                        </h6>
+                                        <img id="comparison-image" class="img-fluid rounded border" alt="이미지 비교">
+                                    </div>
+                                </div>
+
                                 <!-- Features -->
                                 <div class="mb-4">
                                     <h6 class="text-secondary">
@@ -290,12 +324,25 @@
         const formData = new FormData();
         formData.append('file', currentFile);
 
-        // Send request
+        // Send request with timeout and better error handling
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 60000); // 60초 타임아웃
+
         fetch('/upload', {
             method: 'POST',
-            body: formData
+            body: formData,
+            signal: controller.signal,
+            headers: {
+                'Accept': 'application/json',
+            }
         })
-            .then(response => response.json())
+            .then(response => {
+                clearTimeout(timeoutId);
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                return response.json();
+            })
             .then(data => {
                 document.getElementById('loading').classList.add('d-none');
 
@@ -303,14 +350,26 @@
                     currentResult = data.result;
                     displayResults(data.result);
                 } else {
-                    alert('분석 중 오류가 발생했습니다: ' + data.error);
+                    alert('분석 중 오류가 발생했습니다: ' + (data.error || '알 수 없는 오류'));
                     document.getElementById('file-preview').classList.remove('d-none');
                 }
             })
             .catch(error => {
+                clearTimeout(timeoutId);
                 document.getElementById('loading').classList.add('d-none');
-                alert('분석 중 오류가 발생했습니다: ' + error.message);
+                
+                let errorMessage = '분석 중 오류가 발생했습니다: ';
+                if (error.name === 'AbortError') {
+                    errorMessage += '요청 시간이 초과되었습니다. 다시 시도해주세요.';
+                } else if (error.message.includes('Failed to fetch')) {
+                    errorMessage += '서버에 연결할 수 없습니다. 서버가 실행 중인지 확인해주세요.';
+                } else {
+                    errorMessage += error.message;
+                }
+                
+                alert(errorMessage);
                 document.getElementById('file-preview').classList.remove('d-none');
+                console.error('Upload error:', error);
             });
     }
 
@@ -327,6 +386,19 @@
 
         // Set explanation
         document.getElementById('explanation-text').textContent = result.explanation;
+
+        // Set preprocessing info
+        if (result.preprocessing_info) {
+            document.getElementById('original-dimensions').textContent = result.preprocessing_info.original_dimensions;
+            document.getElementById('processed-dimensions').textContent = result.preprocessing_info.processed_dimensions;
+            document.getElementById('preprocessing-reason').textContent = result.preprocessing_info.reason;
+        }
+
+        // Set image comparison if available
+        if (result.comparison_image) {
+            document.getElementById('comparison-image').src = '/static/' + result.comparison_image;
+            document.getElementById('image-comparison').classList.remove('d-none');
+        }
 
         // Set features
         if (result.features) {

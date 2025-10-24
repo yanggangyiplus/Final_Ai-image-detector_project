@@ -5,6 +5,7 @@ AI 이미지 분류 웹 애플리케이션
 """
 
 from flask import Flask, render_template, request, jsonify, redirect, url_for
+from flask_cors import CORS
 import os
 import uuid
 from datetime import datetime
@@ -14,6 +15,8 @@ import torch
 from transformers import pipeline, ViTForImageClassification, ViTImageProcessor
 from PIL import Image
 import numpy as np
+import matplotlib
+matplotlib.use('Agg')  # GUI 없이 matplotlib 사용 (웹 서버용)
 import matplotlib.pyplot as plt
 import io
 import base64
@@ -25,6 +28,7 @@ from model_retrain import ModelRetrainer
 
 # Flask 앱 초기화
 app = Flask(__name__)
+CORS(app)  # CORS 지원 추가
 app.config['SECRET_KEY'] = 'ai-image-detector-2024'
 app.config['UPLOAD_FOLDER'] = 'static/uploads'
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB 최대 파일 크기
@@ -125,6 +129,54 @@ def preprocess_image_for_model(image_path, target_size=(32, 32)):
         print(f"이미지 전처리 오류: {e}")
         return image_path, None
 
+def create_image_comparison(original_path, processed_path, original_size, processed_size):
+    """원본 이미지와 전처리된 이미지를 비교하는 시각화 생성"""
+    try:
+        # 원본 이미지와 전처리된 이미지 로드
+        original_img = Image.open(original_path)
+        processed_img = Image.open(processed_path)
+        
+        # 비교 이미지 생성 (나란히 배치)
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 4))
+        
+        # 원본 이미지 표시
+        ax1.imshow(original_img)
+        ax1.set_title(f'원본 이미지\n크기: {original_size[0]}x{original_size[1]}', fontsize=12)
+        ax1.axis('off')
+        
+        # 전처리된 이미지 표시 (확대하여 보기 좋게)
+        ax2.imshow(processed_img)
+        ax2.set_title(f'모델 분석용 이미지\n크기: {processed_size[0]}x{processed_size[1]}', fontsize=12)
+        ax2.axis('off')
+        
+        # 이미지 저장
+        comparison_path = original_path.replace('.', '_comparison.')
+        plt.tight_layout()
+        plt.savefig(comparison_path, dpi=150, bbox_inches='tight')
+        plt.close()
+        
+        return comparison_path
+        
+    except Exception as e:
+        print(f"이미지 비교 생성 오류: {e}")
+        return None
+
+def get_image_info(image_path):
+    """이미지의 상세 정보를 반환"""
+    try:
+        with Image.open(image_path) as img:
+            return {
+                'size': img.size,
+                'mode': img.mode,
+                'format': img.format,
+                'width': img.width,
+                'height': img.height,
+                'aspect_ratio': round(img.width / img.height, 2)
+            }
+    except Exception as e:
+        print(f"이미지 정보 조회 오류: {e}")
+        return None
+
 def save_feedback(image_path, prediction, confidence, user_feedback, correct_label):
     """사용자 피드백을 저장"""
     feedback_data = {
@@ -220,29 +272,35 @@ def index():
 @app.route('/upload', methods=['POST'])
 def upload_file():
     """이미지 업로드 및 분석"""
-    if 'file' not in request.files:
-        return jsonify({'error': '파일이 선택되지 않았습니다.'}), 400
-    
-    file = request.files['file']
-    
-    if file.filename == '':
-        return jsonify({'error': '파일이 선택되지 않았습니다.'}), 400
-    
-    if not allowed_file(file.filename):
-        return jsonify({'error': '지원되지 않는 파일 형식입니다. (PNG, JPG, JPEG, GIF, BMP, TIFF만 지원)'}), 400
-    
-    if classifier is None:
-        return jsonify({'error': 'AI 모델이 로드되지 않았습니다.'}), 500
-    
     try:
+        if 'file' not in request.files:
+            return jsonify({'error': '파일이 선택되지 않았습니다.'}), 400
+        
+        file = request.files['file']
+        
+        if file.filename == '':
+            return jsonify({'error': '파일이 선택되지 않았습니다.'}), 400
+        
+        if not allowed_file(file.filename):
+            return jsonify({'error': '지원되지 않는 파일 형식입니다. (PNG, JPG, JPEG, GIF, BMP, TIFF만 지원)'}), 400
+        
+        if classifier is None:
+            return jsonify({'error': 'AI 모델이 로드되지 않았습니다.'}), 500
+        
         # 파일 저장
         filename = secure_filename(file.filename)
         unique_filename = f"{uuid.uuid4().hex}_{filename}"
         filepath = os.path.join(app.config['UPLOAD_FOLDER'], unique_filename)
         file.save(filepath)
         
+        # 이미지 정보 수집
+        image_info = get_image_info(filepath)
+        
         # 이미지 전처리 (32x32로 리사이즈)
         processed_path, original_size = preprocess_image_for_model(filepath)
+        
+        # 이미지 비교 시각화 생성
+        comparison_path = create_image_comparison(filepath, processed_path, original_size, (32, 32))
         
         # 전처리된 이미지로 분석
         result = classifier(processed_path)
@@ -265,8 +323,16 @@ def upload_file():
             'confidence': confidence,
             'explanation': explanation,
             'features': features,
+            'image_info': image_info,
             'original_size': original_size,
             'processed_size': (32, 32),
+            'comparison_image': comparison_path.replace('static/', '') if comparison_path else None,
+            'preprocessing_info': {
+                'original_dimensions': f"{original_size[0]}x{original_size[1]}" if original_size else "알 수 없음",
+                'processed_dimensions': "32x32",
+                'resize_ratio': f"{32/max(original_size) if original_size else 1:.2f}" if original_size else "1.00",
+                'reason': "모델이 32x32 크기로 훈련되었기 때문에 모든 이미지를 이 크기로 조정합니다."
+            },
             'timestamp': datetime.now().isoformat()
         }
         
@@ -276,6 +342,7 @@ def upload_file():
         })
         
     except Exception as e:
+        print(f"Upload error: {e}")
         return jsonify({'error': f'분석 중 오류가 발생했습니다: {str(e)}'}), 500
 
 @app.route('/feedback', methods=['POST'])

@@ -112,6 +112,9 @@ static/results/
 data/feedback/
 logs/
 
+# Test images (too large for GitHub)
+test image/
+
 # IDE files
 .vscode/
 .idea/
